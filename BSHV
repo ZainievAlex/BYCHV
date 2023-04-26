@@ -1,0 +1,214 @@
+library IEEE;
+use IEEE.STD_LOGIC_1164.ALL;
+use IEEE.STD_LOGIC_ARITH.ALL;
+use IEEE.STD_LOGIC_UNSIGNED.ALL;
+
+entity BSHV is
+	generic
+	(
+	constant TI : natural := 50000;											-- Задержка импульса и период импульса (1 Гц) 10 мс
+	constant TR : natural := 2500;											-- Период сигнала 1 кГц
+	constant TT : natural := 25;											-- Длительность импульса 5 мкс (1 кГц)
+	constant TD : natural := 10												-- Длительность импульса 2 мкс (Конец дня)
+	);
+	port
+	(
+		signal	pyt		:	in std_logic;									-- Сигнал 5 МГц
+		signal	correct	:	in std_logic_vector (31 downto 0) ;				-- Сигнал коррекции	
+		signal	clk_in	:	in std_logic ;									-- Секундный сигнал (1Гц)
+		signal	reset	:	in std_logic ;									-- Сигнал сброса
+		signal	end_day :	out std_logic :='0';							-- Сигнал конца дня
+		signal	odin	:	out std_logic :='0';							-- Сигнал 1 кГц
+		signal	BCHV1	:	out std_logic;									-- Выходной сигнал БШВ1
+		signal	BCHV0	:	out std_logic									-- Выходной сигнал БШВ0
+	);
+end BSHV;
+
+
+Architecture behavior of BSHV is
+	signal 	count_end_sec	: std_logic :='0';								-- Сигнал переполнения секунд
+	signal 	count_end_min	: std_logic :='0';								-- Сигнал переполнения минут
+	signal	count_end_hour	: std_logic :='0';								-- Сигнал переполнения часов
+	signal 	count_end_day	: std_logic :='0';								-- Сигнал переполнения дней
+	signal 	count_end_year	: std_logic :='0';								-- Сигнал переполнения лет
+	
+	signal	 count1 : natural range 0 to 50000	:=0; 						-- Счетчик для начало импульса БШВ
+	signal	 count2 : natural range 0 to 2500	:=0; 						-- Счетчик для периода сигнала 1 кГц
+	signal	 count3 : natural range 0 to 25		:=0; 						-- Счетчик для длительности сигнала 1 кГц
+	signal	 count4 : natural range 0 to 5000000:=0; 						-- Счетчик для сигнала Конец дня
+	signal 	 bufer	: natural range 0 to 99	:=0;							-- Номер разряда
+	signal 	 SHV	: std_logic_vector (31 downto 0) :=(others => '0');		-- Буферный 32 разрядный сигнал
+	signal	 odini	: std_logic :='0';										-- Буферный сигнал для 1 кГц
+	
+-- Описание компонента счетчика
+component counter
+	generic
+	(
+	constant capacity	: natural := 6;										-- Количество разрядов
+	constant lim_count	: std_logic_vector := "111011" 						-- Предельное значение 
+	);
+	port
+	(
+		signal	clk			:	in std_logic ;								-- Системные часы
+		signal  correct 	: 	in std_logic_vector (capacity-1 downto 0);	-- Сигнал коррекции
+		signal	reset		:	in	std_logic;								-- Сигнал сброса
+		signal  count_out	:	out std_logic_vector (capacity-1 downto 0); -- Выходной сигнал 
+		signal  count_end	:	out std_logic :='0'							-- Выходной сигнал при достижении лимита 
+	);
+end component;
+
+
+-------------------------------------------------------------------------
+begin
+process (clk_in, pyt)	
+begin
+if clk_in = '1' then								-- Сброс при приходе сигнала 1 Гц(1с)
+	count1 <= 0;									-- Сброс Счетчика для начало импульса БШВ
+	count2 <= 0;									-- Сброс Счетчика для периода сигнала 1 кГц
+	count3 <= 0;									-- Сброс Счетчик для длительности сигнала 1 кГц
+	bufer	<= 0;									-- Сброс Номера разряда
+	odin <= '0';
+	odini <= '0';
+else
+	if pyt'event and pyt='1' then					-- По положительному фронту 5 МГц
+		count1 <= count1 + 1;						-- Увеличение счетчика начало импульса БШВ
+		count2 <= count2 + 1;						-- Увеличение счетчика сигнала периода 1 кГц
+		if count1 = TI-1 then						-- Достижение счетчика для начало импусльса 1 Гц
+			bufer <= bufer + 1;						-- Повышение номера разряда
+			count1 <= 0;							-- Сброс счеткика каждые 10 мс
+		end if;
+		case bufer is								-- Выбор выдачи сигнала в зависимости от разряда
+			when 1 to 32	=> 						-- Выбор разряда от 1 до 32
+				if count1 < TD then					-- 
+					BCHV1 <= SHV(32-bufer);			-- Генерация сигнала на выход БШВ1
+					BCHV0 <= not SHV(32-bufer);		-- Генерация сигнала на выход БШВ0
+				else
+					BCHV1 <= '0';					-- Сброс сигнала БШВ1
+					BCHV0 <= '0';					-- Сброс сигнала БШВ0
+				end if;
+			when others 	=> 						-- Разряд 32+
+				BCHV1 <= '0';						-- Отсутствие сигнала БШВ1
+				BCHV0 <= '0';						-- Отсутствие сигнала БШВ0
+		end case;
+		if count2 = TR-1 then						-- Достижение счетчика периода сигнала 1 кГц
+			odini <= not odini;						-- Инверсия сигнала буферного
+			odin <= not odini;						-- Передача сигнала из буферного в выходной 1 кГц
+			count2 <= 0;							-- Сброс счетчика сигнала периода 1 кГц
+		end if;
+		if odini = '1' then							-- Если есть буферный сигнал
+			count3 <= count3 + 1;					-- Увеличение Счетчика длительности сигнала 1 кГц 
+			if count3 = TT-1 then					-- Достижение длительности сигнала 1 кГц 
+				count3 <= 0;						-- Сброс Счетчика длительности сигнала 1 кГц 
+				odin <= '0';						-- Сброс выходного сигнал 1 кГц
+			end if;
+		end if;
+	end if;	
+end if;
+end process;
+
+
+-- Процесс генерации сигнала Конец дня
+process (pyt,count_end_sec,count_end_min,count_end_hour, count4)
+begin
+	if count_end_hour = '1' then					-- Ожидание окончания часов (24 часа)
+		if count_end_min = '1' then					-- Ожидание окончания минут (60 мин)	
+			if count_end_sec = '1' then				-- Ожидание окончания секунд (60 сек)
+				if pyt'event and pyt='1' then		-- По событию появления положительного сигнала 5 МГц
+					count4 <= count4 + 1;			-- Увеличение счетчика Конца дня
+					if count4 = 1 then				-- Начало сигнал Конец дня
+						end_day <= '1';				-- Поднятие сигнала Конец дня
+					end if;
+					if count4 = TD+1 then			-- Длительность сигнала Конец дня
+						end_day <= '0';				-- Опускание в 0 сигнала Конец дня
+					end if;
+				end if;
+			else
+				count4 <=0;							-- Сброс счетчика при отсутсвии сигнала Конец секунд
+			end if;
+		end if;
+    end if;
+end process;
+
+
+-------------ИНИЦИАЛИЗАЦИЯ КОМПОНЕНТОВ------------------------------------
+
+-- ПОСЧЕТ СЕКУНД
+	sec: counter
+    	generic map
+        (
+			capacity  	=> 6,						-- Разрядность
+			lim_count 	=> "111011"					-- Предельное значение 
+        )
+        port map
+        (
+			clk			=>	clk_in,					-- Системные часы
+			correct 	=> 	correct(5 downto 0),	-- Сигнал коррекции
+			reset		=>	reset,					-- Сигнал сброса
+			count_out	=>	SHV(5 downto 0),		-- Выходной сигнал счетчика секунда
+			count_end	=>	count_end_sec			-- Выходной сигнал конца секунд (60 сек)
+        );
+        
+-- ПОСЧЕТ МИНУТ
+	min: counter
+    	generic map
+        (
+			capacity  	=> 6,						-- Разрядность
+			lim_count 	=> "111011"					-- Предельное значение 
+        )
+        port map
+        (
+			clk			=>	count_end_sec,			-- Системные часы
+			correct 	=> 	correct(11 downto 6),	-- Сигнал коррекции
+			reset		=>	reset,					-- Сигнал сброса
+			count_out	=>	SHV(11 downto 6),		-- Выходной сигнал счетчика минут
+			count_end	=>	count_end_min			-- Выходной сигнал конца минут (60 мин)
+        );
+        
+-- ПОСЧЕТ ЧАСОВ
+	hour: counter
+    	generic map
+        (
+			capacity  	=> 5,						-- Разрядность
+			lim_count 	=> "10111"					-- Предельное значение 
+        )
+        port map
+        (
+			clk			=>	count_end_min,			-- Системные часы
+			correct 	=> 	correct(16 downto 12),	-- Сигнал коррекции
+			reset		=>	reset,					-- Сигнал сброса
+			count_out	=>	SHV(16 downto 12),		-- Выходной сигнал счетчика часов
+			count_end	=>	count_end_hour			-- Выходной сигнал конца часов (24 часа)
+        );
+        
+-- ПОСЧЕТ ЛЕТ
+	day: counter
+    	generic map
+        (
+			capacity  	=> 11,						-- Разрядность
+			lim_count 	=> "10110110100"			-- Предельное значение
+        )
+        port map
+        (
+			clk			=>	count_end_hour,			-- Системные часы
+			correct 	=> 	correct(27 downto 17),	-- Сигнал коррекции
+			reset		=>	reset,					-- Сигнал сброса
+			count_out	=>	SHV(27 downto 17),		-- Выходной сигнал счетчика дней
+			count_end	=>	count_end_day			-- Выходной сигнал конца дней (1_460 дней)
+		);
+
+-- ПОСЧЕТ 4х-летий
+	year: counter
+    	generic map
+        (
+			capacity  	=> 4,						-- Разрядность
+			lim_count 	=> "1111"					-- Предельное значение
+        )
+        port map
+        (
+			clk			=>	count_end_day,			-- Системные часы
+			correct 	=> 	correct(31 downto 28),	-- Сигнал коррекции
+			reset		=>	reset,					-- Сигнал сброса
+			count_out	=>	SHV(31 downto 28),		-- Выходной сигнал счетчика четырехлетий
+			count_end	=>	count_end_year			-- Выходной сигнал конца четырехлетий (16 четырехлетий)
+        );
+end behavior;
