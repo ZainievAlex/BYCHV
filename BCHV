@@ -1,0 +1,140 @@
+-- 15.03.2023
+-- Логика работы БЧВ
+library IEEE;
+use IEEE.STD_LOGIC_1164.ALL;
+use IEEE.STD_LOGIC_ARITH.ALL;
+use IEEE.STD_LOGIC_UNSIGNED.ALL;
+
+entity BCHV is
+	port
+	(
+		signal	sto		:	in std_logic ;											                     -- Сигнал 100 МГц
+		signal	pyt		:	in std_logic;											                       -- Сигнал 5 МГц
+		signal	correctS:	in std_logic_vector (15 downto 0):= (others => '0');	 -- Сигнал коррекции старший разряд
+		signal	correctM:	in std_logic_vector (15 downto 0):= (others => '0');	 -- Сигнал коррекции	младший разряд
+		signal	BCHV1	:	out std_logic;											                     -- Сигнал единиц БШВ
+		signal	BCHV0	:	out std_logic;										                       -- Сигнал нулей БШВ
+		signal	odin	:	out std_logic;											                     -- Сигнал 1 кГц
+		signal	end_day	:	out std_logic;											                   -- Сигнал конца дня
+		signal	meand	:	out std_logic :='0'								                    	 -- Сигнал 1 Гц (1с)
+	);
+end BCHV;
+
+Architecture behavior of BCHV is
+	signal 	mean 	: std_logic :='0';											                    -- Буферный сигнал для 1 с
+	signal	correct	: std_logic_vector (31 downto 0):= (others => '0');			  -- Сигнал коррекции
+	signal	correct_buffer	: std_logic_vector (31 downto 0):= (others => '0');-- Сигнал коррекции буферный
+	signal	reset	: std_logic := '0';											                    -- Сигнал сброса
+	signal  start_count : std_logic :='0';										                -- Счетчик для длительности сигнала сброса
+
+--------------------------------------------Описание компонентов------------------------------------------------------------
+-- Компонент для выдачи испульса БШВ
+component BSHV
+	generic
+	(
+		constant TI : natural := 50000;										                      -- Задержка импульса и период импульса 10 мс
+		constant TR : natural := 2500;										                      -- 1 кГц
+		constant TT : natural := 25;										                        -- Длительность импульса 5 мкс
+		constant TD : natural := 10											                        -- Длительность импульса 2 мкс
+	);
+	port
+	(
+		signal	pyt		:	in std_logic;									                          -- Сигнал 5 МГц
+		signal	correct	:	in std_logic_vector (31 downto 0) ;				            -- Сигнал коррекции	
+		signal	clk_in	:	in std_logic ;									                      -- Секундный сигнал (1Гц)
+		signal	reset	:	in std_logic ;									                        -- Сигнал сброса
+		signal	end_day :	out std_logic :='0';							                    -- Сигнал конца дня
+		signal	odin	:	out std_logic :='0';							                      -- Сигнал 1 кГц
+		signal	BCHV1	:	out std_logic;									                        -- Выходной сигнал БШВ1
+		signal	BCHV0	:	out std_logic									                          -- Выходной сигнал БШВ0
+	);
+end component;
+
+-- Компонет для создания секундного импульса
+component Meandr
+	generic
+	(
+		constant duration_pulse	: natural := 50;		                          -- Длительность импульса (500 нс)
+		constant period_5MHz 	: natural := 20;		                            -- Период 5 МГц сигнала (шаг 1 нс)
+		constant period_pulse	: natural := 5000000	                          -- Период сигнала (1 с)
+	);
+	port
+	(
+		signal	sto		:	in std_logic ;				    -- Сигнал 100 МГц
+		signal	pyt		:	in std_logic ;				    -- Сигнал 5 МГц	
+		signal	reset	:	in std_logic ;				    -- Сигнал синхронизации (сброса)
+		signal	mean	:	out std_logic :='0'			  -- Выходной сигнал (1с)
+	);
+end component;
+-------------------------------------------------------------------------
+begin
+
+-- Процесс сравнение прихода сигнала коррекции
+process(pyt)
+begin
+if pyt'event and pyt='1' then
+	meand <= mean;								              -- Сигнал 1 Гц
+	correct_buffer  <= (correctS & correctM)-1;	-- Передача входного 16-разрядного сигнала коррекции младшего в буферный
+	if correct_buffer /= correct then			      -- Если приходит сигнал коррекции 
+		correct <= correct_buffer ;				        -- Присвоение буферного сигнал в корректирующий
+		start_count <= '1';						            -- Поднятие сигнала сброса
+	else
+		start_count <= '0';						            -- Сброс сигнала сброса
+	end if;
+end if;
+end process;
+
+-- Процесс создания сигнала сброса
+process (pyt, start_count)
+	variable count : natural := 0;				      -- Переменная счетчика для длительности сигнала сброса
+begin
+if start_count = '1' then 						        -- Если есть сигнал старта сигнала сброса
+	count := 1;									                -- Приравнивание счетчика к 1
+elsif pyt'event and pyt='1' then				      -- По положительному фронту сигнала 5 МГц
+	if count > 0 then							              -- Если счетчик больше 1
+		count := count + 1;						            -- Увеличение счетчика на 1
+		reset <= '1';							                -- Поднятние сигнала сброса
+	end if;
+	if count >= 102 then						            -- Как только счетчик достигнет 102 отсчетов
+		reset <= '0';							                -- Сброс сигнала сброса
+		count := 0;								                -- Присвоение счетчику 0
+	end if;
+end if;	
+end process;
+
+
+-------------ИНИЦИАЛИЗАЦИЯ КОМПОНЕНТОВ------------------------------------
+	nBSHV: BSHV
+    	generic map
+        (
+			TI  	=> 50000,				-- Задержка импульса и период импульса (1 Гц) 10 мс
+			TR		=> 2500,				-- Период сигнала 1 кГц
+			TT		=> 25,					-- Длительность импульса 5 мкс (1 кГц)
+			TD 		=> 10					  -- Длительность импульса 2 мкс (Конец дня)
+        )
+        port map
+        (
+			pyt		=>	pyt,				    -- Сигнал 5 МГц
+			correct => 	correct,			-- Сигнал коррекции	
+			reset	=>	reset,				  -- Сигнал сброса
+			clk_in	=>	mean,				  -- Секундный сигнал (1Гц)
+			end_day	=>	end_day,			-- Сигнал конца дня
+			odin	=>	odin,				    -- Сигнал 1 кГц
+			BCHV1	=>	BCHV1,				  -- Выходной сигнал БШВ1
+			BCHV0	=>	BCHV0				    -- Выходной сигнал БШВ0
+        );
+	cMeandr: Meandr
+    	generic map
+        (
+			duration_pulse  => 	50,			-- Длительность импульса 1 Гц (30-70)
+			period_5MHz 	=> 	20,			  -- Период 5 МГц сигнала (шаг 10 нс)
+			period_pulse	=>	5000000 	-- Период сигнала
+        )
+        port map
+        (
+			sto		=>	sto,				-- 100 МГц	
+			pyt		=>	pyt,				-- 5 МГц
+			reset	=>	reset,			-- Сигнал синхронизации (сброса)
+			mean	=>	mean				-- Выходной сигнал 1 Гц
+        );
+end behavior;
