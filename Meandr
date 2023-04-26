@@ -1,0 +1,67 @@
+-- 26.07.2022 начало
+-- 29.07.2022 конец
+-- 25.01.2022 корректировка уменьшения объема с 129 лог.элем. до 42 лог.элем.
+-- Разработка
+-- Модуль генерации 1 с сигнала
+library IEEE;
+use IEEE.STD_LOGIC_1164.ALL;
+use IEEE.STD_LOGIC_ARITH.ALL;
+use IEEE.STD_LOGIC_UNSIGNED.ALL;
+
+entity Meandr is
+	generic
+	(
+	constant duration_pulse	 : natural := 50;			-- Длительность импульса (30-70)
+	constant period_5MHz	 : natural := 20;			-- Период 5 МГц сигнала (шаг 10 нс)
+	constant period_pulse 	 : natural := 5000000		-- Период сигнала
+	);
+	port
+	(
+		signal	sto		:	in std_logic ;				-- 100 МГц
+		signal	pyt		:	in std_logic ;				-- 5 МГц
+		signal	reset	:	in std_logic ;				-- Сигнал синхронизации (сброса)
+		signal	mean	:	out std_logic :='0'			-- Выходной сигнал
+	);
+end Meandr;
+
+Architecture behavior of Meandr is
+signal	 count_period 	: natural range 0 to 5000000:=0;-- Счетчик для периода импульса 
+signal	 count_duration : natural range 0 to 50 :=0;	-- Счетчик для дительности импульса
+signal 	 bufer_duration	: std_logic :='0';				-- Буферный сигнал для длительности сигнала
+signal 	 bufer_period	: std_logic :='0';				-- Буферный сигнал для периода сигнала	
+begin
+-- Основной процесс создания односекундного сигнала (1 Гц)
+process (reset, sto, pyt, count_period, bufer_period)
+begin
+	if reset='1' then 											-- Сигнал сброса
+		count_period <= 0;										-- Сброс счетчика периода импульса
+		count_duration <= 0;									-- Сброс счетчика дительности импульса
+		bufer_duration<='0';									-- Сброс буферного сигнал для длительности сигнала
+		bufer_period<='0';										-- Сброс буферного сигнал для периода сигнала
+		mean <= '0';											-- Сброси 1 Гц сигнала
+	else
+		if rising_edge(sto) then								-- Срабатываети по положительному фронту сигнала 100 МГц
+			if pyt='0' and bufer_period = '0' then				-- Начало сигнала
+				mean <= '1';									-- Поднятие сингала 1 Гц
+				bufer_duration <= '1';							-- Поднятние буферного сигнала для длительности сигнала
+				bufer_period <= '1';							-- Поднятние буферного сигнала для периода сигнала
+			end if;
+			if bufer_duration = '1' then						-- Если есть Буферный сигнал для длительности сигнала
+				count_duration <= count_duration+1;				-- Увеличение счетчика дительности импульса
+			end if;
+			if count_duration = duration_pulse-1 then			-- Длительность сигнала
+				mean <= '0';									-- Выключение сигнала 1 Гц
+				bufer_duration <= '0';							-- Выключение буферного сигнала для длительности сигнала
+			end if;
+		end if;
+		if rising_edge(pyt) and bufer_period = '1' then			-- Для посчета периода сигнала
+			count_period <= count_period+1;						-- Увеличение счетчика периода импульса
+		end if;
+		if count_period = period_pulse then						-- Достижение периода сигнала 1 Гц
+			count_period <= 0;									-- Сброс счетчика периода импульса
+			count_duration <= 0;								-- Сброс счетчика дительности импульса
+			bufer_period <= '0';								-- Сброс буферного сигнал для периода сигнала
+		end if;
+	end if;
+end process;
+end behavior;
