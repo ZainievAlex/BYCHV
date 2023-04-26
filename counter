@@ -1,0 +1,44 @@
+library IEEE;
+use IEEE.STD_LOGIC_1164.ALL;
+use IEEE.STD_LOGIC_ARITH.ALL;
+use IEEE.STD_LOGIC_UNSIGNED.ALL;
+
+
+entity counter is
+	generic
+	(
+	constant capacity	: natural := 6;										-- 
+	constant lim_count	: std_logic_vector := "111011"						-- 	
+	);
+	port
+	(
+		signal	clk			:	in std_logic ;								-- 
+		signal  correct 	: 	in std_logic_vector (capacity-1 downto 0);
+		signal	reset		:	in	std_logic;
+		signal  count_out	:	out std_logic_vector (capacity-1 downto 0);
+		signal  count_end	:	out std_logic
+	);
+end counter;
+
+Architecture behavior of counter is
+
+begin	
+process (clk,reset)
+	variable CNT : std_logic_vector(capacity-1 downto 0):= (others => '0');
+begin
+	if reset ='1' then
+		CNT := correct;
+	else
+		if clk'event and clk='1' then
+			CNT := CNT + '1';
+			if CNT = lim_count+'1' then
+				CNT := (others => '0');
+				count_end <= '1';
+			else
+				count_end <= '0';
+			end if;
+		end if;
+	end if;
+	count_out <= CNT;	
+end process;
+end behavior;
